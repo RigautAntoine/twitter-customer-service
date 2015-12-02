@@ -3,6 +3,8 @@ library(tm)
 library(stringr)
 library(slam)
 library(glmnet)
+library(ROCR)
+library(ggplot2)
 
 setwd("C:/UVA/DataMining/SYS6018_customerservice/labels/3_final_labels")
 
@@ -67,19 +69,22 @@ tweets$tokens <- apply(POStags, 1, function(x){
   return(paste(tokens[(tags %in% c("N", "^", "Z", "V", "M", "A", "R", "Y", "#")) & confidence > 0.6], collapse=" "))
 })
 
+# Add the sentiment score
+tweets$sentiment <- scores$sentiment
+
 # Get rid of useless tweet
 tweets[tweets$tokens == "",] # None of these are complaints. It is safe to get rid of them
 tweets <- tweets[tweets$tokens != "",]
 
 # Corpus
-docvar <- list(industry="industry", content="tokens", complaint="complaint")
+docvar <- list(industry="industry", content="tokens", complaint="complaint", sentiment="sentiment")
 myReader <- readTabular(mapping=docvar)
 corpus <- Corpus(DataframeSource(tweets), readerControl=list(reader=myReader))
 
 # Clean up corpus
 corpus <- tm_map(corpus, content_transformer(tolower))
 corpus <- tm_map(corpus, removePunctuation) 
-corpus <- tm_map(corpus, removeWords, c(stopwords("english"), "https",'southwestair', "americanairlines", "delta", "united", "deltaassist", "americanair", "jetblue", "comcast", "comcastcares","verizonsupport","vzwsupport", "verizon", "att", "attcares", "tmobilehelp", "dish", "hulu_support", "dish_answers", "hulu", "tmobile"))
+corpus <- tm_map(corpus, removeWords, c(stopwords("english"), "https",'southwestair', "americanairlines", "delta", "united", "deltaassist", "americanair", "jetblue", "comcast", "comcastcares","verizonsupport","vzwsupport", "verizon", "att", "attcares", "tmobilehelp", "dish", "hulu_support", "dish_answers", "hulu", "tmobile", "comcastsucks"))
 corpus <- tm_map(corpus, removeNumbers) 
 corpus <- tm_map(corpus, stripWhitespace)
 
@@ -91,7 +96,8 @@ dtm <- dtm[row_sums(dtm) > 0,] # And we suppress the documents that are now empt
 dtm
 
 # Convert to matrix form and add the label "complaint"
-dtm.m <- cbind(unlist(meta(corpus, "complaint")), as.matrix(dtm))
+dtm.m <- cbind(unlist(meta(corpus, "complaint")), unlist(meta(corpus, "sentiment")), as.matrix(dtm))
+df <- data.frame( complaint = unlist(meta(corpus, "complaint")), sentiment = unlist(meta(corpus, "sentiment")), as.matrix(dtm))
 
 # Construct training and testing sets
 set.seed(1)
@@ -146,4 +152,3 @@ ggplot(roc.data, aes(x=fpr, ymin=0, ymax=tpr)) +
   geom_ribbon(alpha=0.2) +
   geom_line(aes(y=tpr)) +
   ggtitle(paste0("ROC Curve w/ AUC=", auc))
-
