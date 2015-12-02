@@ -9,6 +9,52 @@ setwd("C:/UVA/DataMining/SYS6018_customerservice/labels/3_final_labels")
 # Get the tweet file
 tweets <- read.csv("trainData.csv", stringsAsFactors = T)
 
+# Get the sentiment scores
+scores <- read.csv("sentimentScores.csv", stringsAsFactors = F)
+names(scores)[5] <- "sentiment"
+scores <- scores[,c("text", "industry", "sentiment", "complaint")]
+
+# Naive model
+set.seed(1) 
+ind <- sample(nrow(scores), 3000)
+naive.train <- scores[ind,]
+naive.test <- scores[-ind,]
+naive <- glm(complaint~sentiment, data=naive.train, family = "binomial")
+summary(naive)
+probs <- predict(naive, newdata = naive.test, type = "response")
+preds <- sapply(probs, function(x){ifelse(x > 0.5, 1, 0)})
+table(preds, naive.test$complaint)
+
+# Plot an AUC curve
+library(ROCR)
+library(ggplot2)
+
+preds <- prediction(probs, naive.test$complaint)
+perf <- performance(preds, measure = "tpr", x.measure = "fpr")
+auc <- performance(preds, measure = "auc")
+auc <- auc@y.values[[1]]
+
+roc.data <- data.frame(fpr=unlist(perf@x.values),
+                       tpr=unlist(perf@y.values),
+                       model="GLM")
+ggplot(roc.data, aes(x=fpr, ymin=0, ymax=tpr)) +
+  geom_ribbon(alpha=0.2) +
+  geom_line(aes(y=tpr)) +
+  ggtitle(paste0("ROC Curve w/ AUC=", auc))
+
+# Compute metrics of performance
+
+# Accuracy
+sum(preds == naive.test$complaint) / length(preds) # 74% Accuracy
+
+# Recall
+sum(preds == 1 & preds == naive.test$complaint) / sum(naive.test$complaint == 1) # 0.5% recall
+
+# Precision
+sum(preds == 1 & preds == naive.test$complaint) / sum(preds == 1) # 30% precision
+
+
+
 # Get tweets as parsed by the POS tagger
 POStags <- read.csv("POStags.csv", sep = "\t", header = F, stringsAsFactors = F)
 names(POStags) <- c("token", "tag", "confidence", "original")
@@ -33,7 +79,7 @@ corpus <- Corpus(DataframeSource(tweets), readerControl=list(reader=myReader))
 # Clean up corpus
 corpus <- tm_map(corpus, content_transformer(tolower))
 corpus <- tm_map(corpus, removePunctuation) 
-corpus <- tm_map(corpus, removeWords, c(stopwords("english"), "https",'southwestair', "delta", "united", "deltaassist", "americanair", "jetblue", "comcast", "comcastcares","verizonsupport","vzwsupport", "verizon", "att", "attcares", "tmobilehelp", "dish", "hulu_support", "dish_answers", "hulu", "tmobile"))
+corpus <- tm_map(corpus, removeWords, c(stopwords("english"), "https",'southwestair', "americanairlines", "delta", "united", "deltaassist", "americanair", "jetblue", "comcast", "comcastcares","verizonsupport","vzwsupport", "verizon", "att", "attcares", "tmobilehelp", "dish", "hulu_support", "dish_answers", "hulu", "tmobile"))
 corpus <- tm_map(corpus, removeNumbers) 
 corpus <- tm_map(corpus, stripWhitespace)
 
@@ -72,6 +118,7 @@ coef.df <- coef.df[order(coef.df$X1, decreasing = T),]
 View(coef.df)
 
 # How does it work on test set?
+probs <- predict(trainll, newx = test[,-1], s = bestlam, type="response")
 testPred <- predict(trainll, newx = test[,-1], s = bestlam, type="class")
 table(testPred, test[,1])
 
@@ -85,3 +132,18 @@ sum(testPred == 1 & testPred == test[,1]) / sum(test[,1] == 1) # 55% recall
 
 # Precision
 sum(testPred == 1 & testPred == test[,1]) / sum(testPred == 1) # 77% precision
+
+# AUC curve
+preds <- prediction(probs, test[,1])
+perf <- performance(preds, measure = "tpr", x.measure = "fpr")
+auc <- performance(preds, measure = "auc")
+auc <- auc@y.values[[1]]
+
+roc.data <- data.frame(fpr=unlist(perf@x.values),
+                       tpr=unlist(perf@y.values),
+                       model="GLM")
+ggplot(roc.data, aes(x=fpr, ymin=0, ymax=tpr)) +
+  geom_ribbon(alpha=0.2) +
+  geom_line(aes(y=tpr)) +
+  ggtitle(paste0("ROC Curve w/ AUC=", auc))
+
