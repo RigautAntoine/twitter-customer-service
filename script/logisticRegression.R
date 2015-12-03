@@ -152,3 +152,77 @@ ggplot(roc.data, aes(x=fpr, ymin=0, ymax=tpr)) +
   geom_ribbon(alpha=0.2) +
   geom_line(aes(y=tpr)) +
   ggtitle(paste0("ROC Curve w/ AUC=", auc))
+
+
+# Separate into industries
+
+dtm.m <- data.frame(industry=unlist(meta(corpus, "industry")), dtm.m)
+
+air.dtm <- as.matrix(dtm.m[dtm.m$industry == "airlines", -1])
+tel.dtm <- as.matrix(dtm.m[dtm.m$industry == "telecom", -1])
+
+# Construct training and testing sets
+set.seed(1)
+ind <- sample(nrow(air.dtm), 1500) 
+air.train <- air.dtm[ind,] # Train has about 70% of the set
+air.test <- air.dtm[-ind,] # Test has the remaining 30%
+
+# Logistic regression with regularization
+air.cv.lam <- cv.glmnet(air.train[,-1], factor(air.train[,1]), alpha=1, family="binomial", type.measure = "class")
+air.bestlam <- air.cv.lam$lambda.min # best lambda as selected by cross validation
+
+# Estimate lasso logistic with lambda chosen by cv on training data
+air.trainll <- glmnet(air.train[,-1], factor(air.train[,1]), alpha=1, family="binomial")
+air.probs <- predict(air.trainll, newx = air.test[,-1], s = air.bestlam, type="response")
+
+
+sum(testPred == 1 & testPred == test[,1]) / sum(test[,1] == 1) # 55% recall
+
+# AUC curve
+air.preds <- prediction(air.probs, air.test[,1])
+air.perf <- performance(air.preds, measure = "tpr", x.measure = "fpr")
+air.auc <- performance(air.preds, measure = "auc")
+air.auc <- air.auc@y.values[[1]]
+
+air.roc.data <- data.frame(fpr=unlist(air.perf@x.values),
+                       tpr=unlist(air.perf@y.values),
+                       model="GLM")
+ggplot(air.roc.data, aes(x=fpr, ymin=0, ymax=tpr)) +
+  geom_ribbon(alpha=0.2) +
+  geom_line(aes(y=tpr)) +
+  ggtitle(paste0("ROC Curve w/ AUC=", air.auc))
+
+
+# Telecom industry
+# Construct training and testing sets
+set.seed(1)
+ind <- sample(nrow(tel.dtm), 1500) 
+tel.train <- tel.dtm[ind,] # Train has about 70% of the set
+tel.test <- tel.dtm[-ind,] # Test has the remaining 30%
+
+# Logistic regression with regularization
+tel.cv.lam <- cv.glmnet(tel.train[,-1], factor(tel.train[,1]), alpha=1, family="binomial", type.measure = "class")
+tel.bestlam <- tel.cv.lam$lambda.min # best lambda as selected by cross validation
+
+# Estimate lasso logistic with lambda chosen by cv on training data
+tel.trainll <- glmnet(tel.train[,-1], factor(tel.train[,1]), alpha=1, family="binomial")
+tel.probs <- predict(tel.trainll, newx = tel.test[,-1], s = tel.bestlam, type="response")
+
+# AUC curve
+tel.preds <- prediction(tel.probs, tel.test[,1])
+tel.perf <- performance(tel.preds, measure = "tpr", x.measure = "fpr")
+tel.auc <- performance(tel.preds, measure = "auc")
+tel.auc <- tel.auc@y.values[[1]]
+
+tel.roc.data <- data.frame(fpr=unlist(tel.perf@x.values),
+                           tpr=unlist(tel.perf@y.values),
+                           model="GLM")
+ggplot(tel.roc.data, aes(x=fpr, ymin=0, ymax=tpr)) +
+  geom_ribbon(alpha=0.2) +
+  geom_line(aes(y=tpr)) +
+  ggtitle(paste0("ROC Curve w/ AUC=", tel.auc))
+
+
+plot(perf, col="red", main = "ROC curve")
+plot(air.perf, add = TRUE, col="green")
+plot(tel.perf, add = TRUE, col="blue")
