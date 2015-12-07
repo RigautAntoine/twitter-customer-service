@@ -5,7 +5,58 @@ library(slam)
 library(glmnet)
 library(ROCR)
 library(ggplot2)
+library(caret)
+library(RColorBrewer)
+library(AUC)
 
+
+CL=brewer.pal(9, "Set1")
+
+# supporting functions
+plot.ROC.curve <- function(probs, labels){
+  preds <- prediction(probs, labels)
+  perf <- performance(preds, measure = "tpr", x.measure = "fpr")
+  auc <- performance(preds, measure = "auc")
+  auc <- auc@y.values[[1]]
+  
+  roc.data <- data.frame(fpr=unlist(perf@x.values),
+                         tpr=unlist(perf@y.values),
+                         model="GLM")
+  ggplot(roc.data, aes(x=fpr, ymin=0, ymax=tpr)) +
+    geom_ribbon(alpha=0.2) +
+    geom_line(aes(y=tpr)) +
+    ggtitle(paste0("ROC Curve w/ AUC=", auc))
+}
+
+ROC <- function(probs, labels){
+  preds <- prediction(probs, labels)
+  perf <- performance(preds, measure = "tpr", x.measure = "fpr")
+  auc <- performance(preds, measure = "auc")
+  auc <- auc@y.values[[1]]
+  return(list(roc=cbind(unlist(perf@x.values),unlist(perf@y.values)),
+              auc=auc))
+}
+
+
+plot.CV.ROC.curve = function(formula, data, k){
+  folds <- createFolds(1:nrow(data), k)
+  plot(0:1,0:1,col="white",xlab="",ylab="")
+  auc <- rep(0, k)
+  for(i in 1:k){
+    train <- data[unlist(folds[-i]),]
+    test <- data[unlist(folds[i]),]
+    fit <- glm(formula, data=train, family = "binomial")
+    fit.probs <- predict(fit, newdata = test, type = "response")
+    cur <- ROC(fit.probs, test[,"complaint"])
+    lines(cur$roc,type="s",col=CL[i])
+    auc[i] <- cur$auc
+  }
+  title(main = paste0("Mean AUC: ", mean(auc)))
+}
+
+
+
+# Set the directory
 setwd("C:/UVA/DataMining/SYS6018_customerservice/labels/3_final_labels")
 
 # Get the tweet file
@@ -23,39 +74,33 @@ naive.train <- scores[ind,]
 naive.test <- scores[-ind,]
 naive <- glm(complaint~sentiment, data=naive.train, family = "binomial")
 summary(naive)
-probs <- predict(naive, newdata = naive.test, type = "response")
-preds <- sapply(probs, function(x){ifelse(x > 0.5, 1, 0)})
-table(preds, naive.test$complaint)
+naive.probs <- predict(naive, newdata = naive.test, type = "response")
 
 # Plot an AUC curve
-library(ROCR)
-library(ggplot2)
+plot.ROC.curve(naive.probs, naive.test$complaint)
 
-preds <- prediction(probs, naive.test$complaint)
-perf <- performance(preds, measure = "tpr", x.measure = "fpr")
-auc <- performance(preds, measure = "auc")
-auc <- auc@y.values[[1]]
-
-roc.data <- data.frame(fpr=unlist(perf@x.values),
-                       tpr=unlist(perf@y.values),
-                       model="GLM")
-ggplot(roc.data, aes(x=fpr, ymin=0, ymax=tpr)) +
-  geom_ribbon(alpha=0.2) +
-  geom_line(aes(y=tpr)) +
-  ggtitle(paste0("ROC Curve w/ AUC=", auc))
+# Plot cross-validated AUC curves
+plot.CV.ROC.curve(complaint~sentiment, scores, 5)
 
 # Compute metrics of performance
+naive.preds <- sapply(naive.probs, function(x){ifelse(x > 0.5, 1, 0)})
+table(naive.preds, naive.test$complaint) 
+# Our naive model is very conservative about classifying tweets as complaints.
+# We have a lot of false negatives. 
 
 # Accuracy
-sum(preds == naive.test$complaint) / length(preds) # 74% Accuracy
-
+sum(naive.preds == naive.test$complaint) / length(naive.preds) # 74% Accuracy
 # Recall
-sum(preds == 1 & preds == naive.test$complaint) / sum(naive.test$complaint == 1) # 0.5% recall
-
+sum(naive.preds == 1 & naive.preds == naive.test$complaint) / sum(naive.test$complaint == 1) # 0.5% recall
 # Precision
-sum(preds == 1 & preds == naive.test$complaint) / sum(preds == 1) # 30% precision
+sum(naive.preds == 1 & naive.preds == naive.test$complaint) / sum(naive.preds == 1) # 30% precision
 
 
+##############################################################
+
+# Logistic Regression and Bag-of-Words representation of Tweets
+
+##############################################################
 
 # Get tweets as parsed by the POS tagger
 POStags <- read.csv("POStags.csv", sep = "\t", header = F, stringsAsFactors = F)
@@ -84,8 +129,9 @@ corpus <- Corpus(DataframeSource(tweets), readerControl=list(reader=myReader))
 # Clean up corpus
 corpus <- tm_map(corpus, content_transformer(tolower))
 corpus <- tm_map(corpus, removePunctuation) 
-corpus <- tm_map(corpus, removeWords, c(stopwords("english"), "https",'southwestair', "americanairlines", "delta", "united", "deltaassist", "americanair", "jetblue", "comcast", "comcastcares","verizonsupport","vzwsupport", "verizon", "att", "attcares", "tmobilehelp", "dish", "hulu_support", "dish_answers", "hulu", "tmobile", "comcastsucks"))
+corpus <- tm_map(corpus, removeWords, c(stopwords("english"), "https",'southwestair', "comcastdoesntcare", "americanairlines", "delta", "united", "deltaassist", "americanair", "jetblue", "comcast", "comcastcares","verizonsupport","vzwsupport", "verizon", "att", "attcares", "tmobilehelp", "dish", "hulu_support", "dish_answers", "hulu", "tmobile", "comcastsucks"))
 corpus <- tm_map(corpus, removeNumbers) 
+corpus <- tm_map(corpus, stemDocument) 
 corpus <- tm_map(corpus, stripWhitespace)
 
 # Document term matrix
@@ -110,7 +156,7 @@ cv.lam <- cv.glmnet(train[,-1], factor(train[,1]), alpha=1, family="binomial", t
 plot(cv.lam)
 bestlam <- cv.lam$lambda.min # best lambda as selected by cross validation
 bestlam
-log(bestlam) # what's in the plot
+log(bestlam)
 
 # Estimate lasso logistic with lambda chosen by cv on training data
 trainll <- glmnet(train[,-1], factor(train[,1]), alpha=1, family="binomial")
@@ -140,19 +186,7 @@ sum(testPred == 1 & testPred == test[,1]) / sum(test[,1] == 1) # 55% recall
 sum(testPred == 1 & testPred == test[,1]) / sum(testPred == 1) # 77% precision
 
 # AUC curve
-preds <- prediction(probs, test[,1])
-perf <- performance(preds, measure = "tpr", x.measure = "fpr")
-auc <- performance(preds, measure = "auc")
-auc <- auc@y.values[[1]]
-
-roc.data <- data.frame(fpr=unlist(perf@x.values),
-                       tpr=unlist(perf@y.values),
-                       model="GLM")
-ggplot(roc.data, aes(x=fpr, ymin=0, ymax=tpr)) +
-  geom_ribbon(alpha=0.2) +
-  geom_line(aes(y=tpr)) +
-  ggtitle(paste0("ROC Curve w/ AUC=", auc))
-
+plot.ROC.curve(probs, test[,1])
 
 # Separate into industries
 
